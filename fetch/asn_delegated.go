@@ -179,6 +179,7 @@ func (f *MultiRIRASNFetcher) fetchDelegatedRecordsOnce(url string) ([]DelegatedR
 func (f *MultiRIRASNFetcher) parseDelegatedFile(reader io.Reader) ([]DelegatedRecord, error) {
 	var records []DelegatedRecord
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

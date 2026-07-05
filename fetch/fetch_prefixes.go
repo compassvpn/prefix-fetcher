@@ -17,6 +17,11 @@ const (
 	userAgent   = "compassvpn-prefix-fetcher bgp.tools"
 	maxRetries  = 4
 	retryDelay  = 1 * time.Second
+
+	// maxLineSize caps a single scanned line. bufio.Scanner defaults to 64KB
+	// and aborts the whole read on a longer line; BGP/RIR records are tiny, but
+	// 1 MiB of headroom makes an unusually long line a non-issue.
+	maxLineSize = 1 << 20
 )
 
 // httpStatusError represents a non-2xx HTTP response, carrying the code so the
@@ -99,6 +104,7 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 
 	var prefixes []Prefix
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
