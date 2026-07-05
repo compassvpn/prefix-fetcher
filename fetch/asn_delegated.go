@@ -72,14 +72,6 @@ func NewMultiRIRASNFetcher() *MultiRIRASNFetcher {
 	}
 }
 
-func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, error) {
-	result, err := f.FetchASNsForCountries([]string{countryCode})
-	if err != nil {
-		return nil, err
-	}
-	return result[countryCode], nil
-}
-
 // FetchASNsForCountries downloads every RIR delegated file exactly once and
 // extracts ASNs for all requested countries in a single pass, returning a map
 // keyed by country code. This avoids re-downloading the (shared) RIR files once
@@ -140,23 +132,6 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[s
 
 		fmt.Printf("Total unique ASNs for %s across all RIRs: %d\n", cc, len(asns))
 		result[cc] = asns
-	}
-
-	return result, nil
-}
-
-// Downloads ASN data for Iran, China, and Russia from all RIRs.
-func (f *MultiRIRASNFetcher) FetchAllSupportedCountries() (map[string][]int, error) {
-	result := make(map[string][]int)
-
-	countries := GetSupportedCountries()
-
-	for _, country := range countries {
-		asns, err := f.FetchASNsForCountry(country)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch ASNs for %s: %w", country, err)
-		}
-		result[country] = asns
 	}
 
 	return result, nil
@@ -321,18 +296,4 @@ func (f *MultiRIRASNFetcher) isValidPublicASN(asn int) bool {
 	}
 
 	return false
-}
-
-func GetRIRForCountry(countryCode string) (RIR, bool) {
-	rir, exists := CountryToRIR[countryCode]
-	return rir, exists
-}
-
-func GetSupportedCountries() []string {
-	countries := make([]string, 0, len(CountryToRIR))
-	for cc := range CountryToRIR {
-		countries = append(countries, cc)
-	}
-	sort.Strings(countries)
-	return countries
 }
