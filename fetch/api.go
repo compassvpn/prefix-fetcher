@@ -2,8 +2,8 @@ package fetch
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/netip"
 	"os"
@@ -98,43 +98,38 @@ func convertToIPv4Blocks(prefixes []netip.Prefix) []netip.Prefix {
 	return result
 }
 
-// Breaks down larger prefixes into /24 chunks for consistency.
+// Breaks down larger prefixes into /24 chunks for consistency. IPv4 is 32-bit,
+// so plain uint32 arithmetic suffices (no big.Int needed).
 func splitToBlocks(prefix netip.Prefix) []netip.Prefix {
 	if prefix.Bits() >= 24 {
 		// Already /24 or smaller - just align to /24 boundary
-		addr := prefix.Addr()
-		bytes := addr.As4()
+		bytes := prefix.Addr().As4()
 		bytes[3] = 0
-		baseAddr, _ := netip.AddrFromSlice(bytes[:])
-		block := netip.PrefixFrom(baseAddr, 24)
-		return []netip.Prefix{block}
+		return []netip.Prefix{netip.PrefixFrom(netip.AddrFrom4(bytes), 24)}
 	}
 
-	// Split larger blocks (e.g., /16, /20) into multiple /24s
+	// Split larger blocks (e.g., /16, /20) into multiple /24s. The base cannot
+	// overflow: base + (blockCount-1)*256 stays within the prefix's range.
 	blockCount := 1 << (24 - prefix.Bits())
 	blocks := make([]netip.Prefix, blockCount)
 
-	baseInt := ipToInt(prefix.Addr())
-	increment := big.NewInt(256)
-
+	base := ipToUint32(prefix.Addr())
 	for i := 0; i < blockCount; i++ {
-		ip := intToIP(baseInt)
-		blocks[i] = netip.PrefixFrom(ip, 24)
-		baseInt.Add(baseInt, increment)
+		blocks[i] = netip.PrefixFrom(uint32ToIP(base+uint32(i)*256), 24)
 	}
 
 	return blocks
 }
 
-func ipToInt(ip netip.Addr) *big.Int {
-	return big.NewInt(0).SetBytes(ip.AsSlice())
+func ipToUint32(ip netip.Addr) uint32 {
+	bytes := ip.As4()
+	return binary.BigEndian.Uint32(bytes[:])
 }
 
-func intToIP(ipInt *big.Int) netip.Addr {
-	bytes := make([]byte, 4)
-	ipInt.FillBytes(bytes)
-	addr, _ := netip.AddrFromSlice(bytes)
-	return addr
+func uint32ToIP(v uint32) netip.Addr {
+	var bytes [4]byte
+	binary.BigEndian.PutUint32(bytes[:], v)
+	return netip.AddrFrom4(bytes)
 }
 
 // Writes results to standard format files with progress feedback.
