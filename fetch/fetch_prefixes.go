@@ -95,11 +95,17 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 	return prefixes, nil
 }
 
-// Splits already-filtered prefixes by IP family and sorts each deterministically.
-func splitByFamily(prefixes []Prefix) ([]netip.Prefix, []netip.Prefix) {
+// Selects prefixes announced by ASNs in asnSet, splits them by IP family, and
+// sorts each family deterministically. Used to carve a single country's
+// prefixes out of the shared (union-filtered) table.
+func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []netip.Prefix) {
 	var v4, v6 []netip.Prefix
 
 	for _, prefix := range prefixes {
+		if !asnSet[prefix.ASN] {
+			continue
+		}
+
 		if prefix.CIDR.Addr().Is4() {
 			v4 = append(v4, prefix.CIDR)
 		} else if prefix.CIDR.Addr().Is6() {

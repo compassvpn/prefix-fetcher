@@ -21,14 +21,10 @@ jobs:
           go-version: '1.24.5'
           check-latest: true
 
-      - name: Fetch IR prefixes
-        run: go run . --fetch-ir
-
-      - name: Fetch CN prefixes
-        run: go run . --fetch-cn
-
-      - name: Fetch RU prefixes
-        run: go run . --fetch-ru
+      - name: Fetch IR, CN and RU prefixes
+        # Single process so the shared RIR files and BGP table are each
+        # downloaded once for all countries, not once per country.
+        run: go run . --fetch-ir --fetch-cn --fetch-ru
 
       - name: Verify output files are non-empty
         run: |
