@@ -25,8 +25,9 @@ type Prefix struct {
 	ASN  int          `json:"ASN"`
 }
 
-// Downloads the full BGP table with exponential backoff on failures,
-// retaining only prefixes announced by ASNs in asnSet.
+// Downloads the full BGP table with linear backoff on failures (delay grows
+// by retryDelay each attempt), retaining only prefixes announced by ASNs in
+// asnSet.
 func fetchWithRetrySimple(client *http.Client, asnSet map[int]bool) ([]Prefix, error) {
 	var lastErr error
 
