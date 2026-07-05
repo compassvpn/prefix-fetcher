@@ -18,37 +18,58 @@ type PrefixSet struct {
 	IPv6 []netip.Prefix
 }
 
-// Downloads ASN allocations from the appropriate RIR for a country.
-func GetASNsForCountry(country string) ([]int, error) {
+// Downloads ASN allocations from all RIRs for the given countries in a single
+// pass, returning a map keyed by country code.
+func GetASNsForCountries(countries []string) (map[string][]int, error) {
 	fetcher := NewMultiRIRASNFetcher()
-	return fetcher.FetchASNsForCountry(country)
+	return fetcher.FetchASNsForCountries(countries)
 }
 
-// Downloads BGP prefixes and converts IPv4 to /24 blocks.
-func GetPrefixesForASNs(asns []int) (*PrefixSet, error) {
-	if len(asns) == 0 {
-		return &PrefixSet{}, nil
+// GetPrefixesForCountries downloads the BGP table exactly once (filtered to the
+// union of all countries' ASNs during the scan) and then carves out each
+// country's prefixes, converting IPv4 to /24 blocks. Returns a map keyed by
+// country code.
+func GetPrefixesForCountries(countryASNs map[string][]int) (map[string]*PrefixSet, error) {
+	result := make(map[string]*PrefixSet, len(countryASNs))
+
+	// Union of every country's ASNs: we only need to retain a prefix from the
+	// table if some requested country announces it.
+	union := make(map[int]bool)
+	for _, asns := range countryASNs {
+		for _, asn := range asns {
+			union[asn] = true
+		}
 	}
 
-	asnSet := make(map[int]bool, len(asns))
-	for _, asn := range asns {
-		asnSet[asn] = true
+	if len(union) == 0 {
+		for country := range countryASNs {
+			result[country] = &PrefixSet{}
+		}
+		return result, nil
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	bgpPrefixes, err := fetchWithRetrySimple(client, asnSet)
+	fmt.Println("Downloading BGP table once for all countries...")
+	bgpPrefixes, err := fetchWithRetrySimple(client, union)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch BGP data: %w", err)
 	}
 
-	ipv4, ipv6 := splitByFamily(bgpPrefixes)
-	ipv4Blocks := convertToIPv4Blocks(ipv4)
+	for country, asns := range countryASNs {
+		asnSet := make(map[int]bool, len(asns))
+		for _, asn := range asns {
+			asnSet[asn] = true
+		}
 
-	return &PrefixSet{
-		IPv4: ipv4Blocks,
-		IPv6: ipv6,
-	}, nil
+		ipv4, ipv6 := filterAndSplit(bgpPrefixes, asnSet)
+		result[country] = &PrefixSet{
+			IPv4: convertToIPv4Blocks(ipv4),
+			IPv6: ipv6,
+		}
+	}
+
+	return result, nil
 }
 
 // Deduplicates and normalizes IPv4 prefixes into /24 blocks.

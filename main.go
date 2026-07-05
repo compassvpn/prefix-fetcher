@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"prefix-fetcher/fetch"
 )
@@ -24,57 +25,58 @@ func main() {
 		return
 	}
 
-	if !*fetchIR && !*fetchCN && !*fetchRU {
+	// Collect requested countries in a stable order.
+	var countries []string
+	if *fetchIR {
+		countries = append(countries, "IR")
+	}
+	if *fetchCN {
+		countries = append(countries, "CN")
+	}
+	if *fetchRU {
+		countries = append(countries, "RU")
+	}
+
+	if len(countries) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: Please specify one of --fetch-ir, --fetch-cn, or --fetch-ru\n\n")
 		showHelp()
 		os.Exit(1)
 	}
 
-	if *fetchIR {
-		if err := fetchAndSavePrefixes("IR"); err != nil {
-			log.Fatalf("Failed to fetch Iran prefixes: %v", err)
-		}
-	}
-
-	if *fetchCN {
-		if err := fetchAndSavePrefixes("CN"); err != nil {
-			log.Fatalf("Failed to fetch China prefixes: %v", err)
-		}
-	}
-
-	if *fetchRU {
-		if err := fetchAndSavePrefixes("RU"); err != nil {
-			log.Fatalf("Failed to fetch Russia prefixes: %v", err)
-		}
+	if err := fetchAndSavePrefixes(countries); err != nil {
+		log.Fatalf("Failed to fetch prefixes: %v", err)
 	}
 }
 
-// fetchAndSavePrefixes fetches ASNs and prefixes for a country and saves to files
-func fetchAndSavePrefixes(country string) error {
-	fmt.Printf("Fetching prefixes for %s...\n", country)
+// fetchAndSavePrefixes fetches ASNs and prefixes for the given countries and
+// saves them to files. The shared RIR delegated files and the BGP table are
+// each downloaded only once, regardless of how many countries are requested.
+func fetchAndSavePrefixes(countries []string) error {
+	fmt.Printf("Fetching prefixes for %s...\n", strings.Join(countries, ", "))
 
-	// Get ASNs from RIR
-	asns, err := fetch.GetASNsForCountry(country)
+	// Get ASNs from all RIRs (single pass).
+	asnsByCountry, err := fetch.GetASNsForCountries(countries)
 	if err != nil {
 		return fmt.Errorf("failed to get ASNs: %w", err)
 	}
 
-	fmt.Printf("Found %d ASNs for %s\n", len(asns), country)
-
-	// Fetch BGP prefixes
-	prefixes, err := fetch.GetPrefixesForASNs(asns)
+	// Fetch BGP prefixes (single download for all countries).
+	prefixesByCountry, err := fetch.GetPrefixesForCountries(asnsByCountry)
 	if err != nil {
 		return fmt.Errorf("failed to get prefixes: %w", err)
 	}
 
-	fmt.Printf("Found %d IPv4 and %d IPv6 prefixes\n", len(prefixes.IPv4), len(prefixes.IPv6))
+	// Save each country's results.
+	for _, country := range countries {
+		prefixes := prefixesByCountry[country]
+		fmt.Printf("Found %d IPv4 and %d IPv6 prefixes for %s\n", len(prefixes.IPv4), len(prefixes.IPv6), country)
 
-	// Save to files
-	if err := fetch.SavePrefixesToFiles(country, prefixes); err != nil {
-		return fmt.Errorf("failed to save prefixes: %w", err)
+		if err := fetch.SavePrefixesToFiles(country, prefixes); err != nil {
+			return fmt.Errorf("failed to save prefixes for %s: %w", country, err)
+		}
 	}
 
-	fmt.Printf("Prefixes saved successfully\n")
+	fmt.Println("Prefixes saved successfully")
 	return nil
 }
 

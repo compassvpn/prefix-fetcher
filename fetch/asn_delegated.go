@@ -73,18 +73,31 @@ func NewMultiRIRASNFetcher() *MultiRIRASNFetcher {
 }
 
 func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, error) {
+	result, err := f.FetchASNsForCountries([]string{countryCode})
+	if err != nil {
+		return nil, err
+	}
+	return result[countryCode], nil
+}
+
+// FetchASNsForCountries downloads every RIR delegated file exactly once and
+// extracts ASNs for all requested countries in a single pass, returning a map
+// keyed by country code. This avoids re-downloading the (shared) RIR files once
+// per country.
+func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[string][]int, error) {
 	// Get all RIRs for comprehensive coverage
 	rirs := []RIR{RIPE_NCC, APNIC, ARIN, LACNIC, AFRINIC}
 
-	fmt.Printf("Fetching ASNs for %s from all RIRs for comprehensive coverage\n", countryCode)
+	fmt.Printf("Fetching ASNs for %s from all RIRs for comprehensive coverage\n", strings.Join(countryCodes, ", "))
 
-	// The primary RIR holds the bulk of a country's allocations. If it cannot
-	// be fetched we must abort rather than emit a near-empty list, which would
-	// otherwise be published and prune known-good releases downstream.
-	primary, hasPrimary := CountryToRIR[countryCode]
-	primaryFetched := false
+	// Per-country ASN sets for deduplication across RIRs.
+	asnSets := make(map[string]map[int]bool, len(countryCodes))
+	for _, cc := range countryCodes {
+		asnSets[cc] = make(map[int]bool)
+	}
 
-	asnSet := make(map[int]bool) // Use map for deduplication
+	// Track which RIRs were fetched so we can enforce the primary-RIR guard.
+	fetched := make(map[RIR]bool, len(rirs))
 
 	for _, rir := range rirs {
 		fmt.Printf("Checking %s (%s)...\n", rir.Name, rir.URL)
@@ -94,36 +107,41 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, err
 			fmt.Printf("Warning: Failed to fetch from %s: %v\n", rir.Name, err)
 			continue // Continue with other RIRs even if one fails
 		}
+		fetched[rir] = true
 
-		if hasPrimary && rir == primary {
-			primaryFetched = true
-		}
+		for _, cc := range countryCodes {
+			asns := f.extractASNsForCountry(records, cc)
+			fmt.Printf("Found %d ASNs for %s from %s\n", len(asns), cc, rir.Name)
 
-		asns := f.extractASNsForCountry(records, countryCode)
-		fmt.Printf("Found %d ASNs for %s from %s\n", len(asns), countryCode, rir.Name)
-
-		// Add to set for deduplication
-		for _, asn := range asns {
-			asnSet[asn] = true
+			for _, asn := range asns {
+				asnSets[cc][asn] = true
+			}
 		}
 	}
 
-	if hasPrimary && !primaryFetched {
-		return nil, fmt.Errorf("primary RIR %s for %s could not be fetched after retries; aborting to avoid publishing incomplete data", primary.Name, countryCode)
+	result := make(map[string][]int, len(countryCodes))
+	for _, cc := range countryCodes {
+		// The primary RIR holds the bulk of a country's allocations. If it
+		// cannot be fetched we must abort rather than emit a near-empty list,
+		// which would otherwise be published and prune known-good releases.
+		if primary, hasPrimary := CountryToRIR[cc]; hasPrimary && !fetched[primary] {
+			return nil, fmt.Errorf("primary RIR %s for %s could not be fetched after retries; aborting to avoid publishing incomplete data", primary.Name, cc)
+		}
+
+		asns := make([]int, 0, len(asnSets[cc]))
+		for asn := range asnSets[cc] {
+			asns = append(asns, asn)
+		}
+		sort.Ints(asns)
+
+		if len(asns) == 0 {
+			return nil, fmt.Errorf("no ASNs found for %s; refusing to continue with empty data", cc)
+		}
+
+		fmt.Printf("Total unique ASNs for %s across all RIRs: %d\n", cc, len(asns))
+		result[cc] = asns
 	}
 
-	// Convert set back to sorted slice
-	result := make([]int, 0, len(asnSet))
-	for asn := range asnSet {
-		result = append(result, asn)
-	}
-	sort.Ints(result)
-
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no ASNs found for %s; refusing to continue with empty data", countryCode)
-	}
-
-	fmt.Printf("Total unique ASNs for %s across all RIRs: %d\n", countryCode, len(result))
 	return result, nil
 }
 
