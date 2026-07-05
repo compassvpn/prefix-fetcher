@@ -30,14 +30,19 @@ func GetPrefixesForASNs(asns []int) (*PrefixSet, error) {
 		return &PrefixSet{}, nil
 	}
 
+	asnSet := make(map[int]bool, len(asns))
+	for _, asn := range asns {
+		asnSet[asn] = true
+	}
+
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	bgpPrefixes, err := fetchWithRetrySimple(client)
+	bgpPrefixes, err := fetchWithRetrySimple(client, asnSet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch BGP data: %w", err)
 	}
 
-	ipv4, ipv6 := filterByASN(bgpPrefixes, asns)
+	ipv4, ipv6 := splitByFamily(bgpPrefixes)
 	ipv4Blocks := convertToIPv4Blocks(ipv4)
 
 	return &PrefixSet{
