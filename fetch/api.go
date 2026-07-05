@@ -65,7 +65,7 @@ func GetPrefixesForCountries(countryASNs map[string][]int) (map[string]*PrefixSe
 		ipv4, ipv6 := filterAndSplit(bgpPrefixes, asnSet)
 		result[country] = &PrefixSet{
 			IPv4: convertToIPv4Blocks(ipv4),
-			IPv6: ipv6,
+			IPv6: dedupPrefixes(ipv6),
 		}
 	}
 
@@ -92,6 +92,28 @@ func convertToIPv4Blocks(prefixes []netip.Prefix) []netip.Prefix {
 	result := make([]netip.Prefix, 0, len(blockSet))
 	for block := range blockSet {
 		result = append(result, block)
+	}
+
+	slices.SortFunc(result, prefixCompare)
+	return result
+}
+
+// Deduplicates and sorts prefixes. Used for IPv6 (kept in its original form),
+// mirroring the dedup that convertToIPv4Blocks already does for IPv4: the same
+// CIDR can be announced by more than one of a country's ASNs.
+func dedupPrefixes(prefixes []netip.Prefix) []netip.Prefix {
+	if len(prefixes) == 0 {
+		return nil
+	}
+
+	set := make(map[netip.Prefix]bool, len(prefixes))
+	for _, prefix := range prefixes {
+		set[prefix] = true
+	}
+
+	result := make([]netip.Prefix, 0, len(set))
+	for prefix := range set {
+		result = append(result, prefix)
 	}
 
 	slices.SortFunc(result, prefixCompare)

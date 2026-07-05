@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
-	"slices"
 	"strings"
 	"time"
 )
@@ -130,8 +129,8 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 
 // Selects prefixes announced by ASNs in asnSet and splits them by IP family.
 // Used to carve a single country's prefixes out of the shared (union-filtered)
-// table. Only v6 is sorted here; v4 is sorted (after /24 conversion + dedup) by
-// convertToIPv4Blocks, so sorting it here would be wasted work.
+// table. Neither family is sorted or deduplicated here: v4 is handled by
+// convertToIPv4Blocks and v6 by dedupPrefixes, both of which dedup and sort.
 func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []netip.Prefix) {
 	var v4, v6 []netip.Prefix
 
@@ -146,8 +145,6 @@ func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []n
 			v6 = append(v6, prefix.CIDR)
 		}
 	}
-
-	slices.SortFunc(v6, prefixCompare)
 
 	return v4, v6
 }
