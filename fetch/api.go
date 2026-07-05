@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"bufio"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -136,10 +137,18 @@ func writePrefixesToFile(filename string, prefixes []netip.Prefix) error {
 	}
 	defer file.Close()
 
+	// Buffer writes: prefix lists can reach ~1M+ /24 blocks (e.g. CN), and one
+	// syscall per line is needlessly slow.
+	writer := bufio.NewWriter(file)
+
 	for _, prefix := range prefixes {
-		if _, err := file.WriteString(prefix.String() + "\n"); err != nil {
+		if _, err := writer.WriteString(prefix.String() + "\n"); err != nil {
 			return fmt.Errorf("failed to write prefix: %w", err)
 		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush prefixes: %w", err)
 	}
 
 	return nil
