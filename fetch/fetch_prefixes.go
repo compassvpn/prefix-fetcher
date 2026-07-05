@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -18,6 +19,34 @@ const (
 	maxRetries  = 4
 	retryDelay  = 1 * time.Second
 )
+
+// httpStatusError represents a non-2xx HTTP response, carrying the code so the
+// retry logic can decide whether another attempt is worthwhile.
+type httpStatusError struct {
+	code   int
+	status string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.code, e.status)
+}
+
+// retriable reports whether an error is worth another attempt. Network errors
+// and 5xx responses are transient. Among 4xx responses, only 429 (Too Many
+// Requests) and 408 (Request Timeout) are worth retrying — the rest (404, 403,
+// 400, ...) are permanent and retrying just wastes time.
+func retriable(err error) bool {
+	var se *httpStatusError
+	if !errors.As(err, &se) {
+		return true // non-HTTP errors (network, read, parse) are transient
+	}
+
+	switch se.code {
+	case http.StatusTooManyRequests, http.StatusRequestTimeout:
+		return true
+	}
+	return se.code < 400 || se.code >= 500
+}
 
 // BGP route entry with its announcing ASN.
 type Prefix struct {
@@ -38,6 +67,9 @@ func fetchWithRetrySimple(client *http.Client, asnSet map[int]bool) ([]Prefix, e
 		}
 
 		lastErr = err
+		if !retriable(err) {
+			return nil, fmt.Errorf("non-retriable error: %w", err)
+		}
 		if attempt < maxRetries {
 			delay := time.Duration(attempt) * retryDelay
 			time.Sleep(delay)
@@ -63,7 +95,7 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, &httpStatusError{code: resp.StatusCode, status: resp.Status}
 	}
 
 	var prefixes []Prefix

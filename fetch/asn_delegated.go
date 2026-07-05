@@ -175,6 +175,9 @@ func (f *MultiRIRASNFetcher) fetchDelegatedRecords(url string) ([]DelegatedRecor
 		}
 
 		lastErr = err
+		if !retriable(err) {
+			return nil, fmt.Errorf("non-retriable error: %w", err)
+		}
 		if attempt < maxRetries {
 			time.Sleep(time.Duration(attempt) * retryDelay)
 		}
@@ -191,7 +194,7 @@ func (f *MultiRIRASNFetcher) fetchDelegatedRecordsOnce(url string) ([]DelegatedR
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP request failed with status: %d", resp.StatusCode)
+		return nil, &httpStatusError{code: resp.StatusCode, status: resp.Status}
 	}
 
 	return f.parseDelegatedFile(resp.Body)
