@@ -13,7 +13,7 @@
 - **IPv4 /24 Blocks**: Converts IPv4 prefixes to /24 blocks for efficient processing
 - **IPv6 Preservation**: Keeps IPv6 prefixes in their original format
 - **Clean & Simple**: No caching, fresh data on every run
-- **Automatic retry logic** with exponential backoff
+- **Automatic retry logic** with linear backoff
 - **Duplicate removal**: Automatically deduplicates ASNs found across multiple RIRs
 
 ## Prerequisites
