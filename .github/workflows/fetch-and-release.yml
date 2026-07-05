@@ -33,6 +33,18 @@ jobs:
       - name: Fetch RU prefixes
         run: go run . --fetch-ru
 
+      - name: Verify output files are non-empty
+        run: |
+          for f in ir_prefixes_v4.txt ir_prefixes_v6.txt \
+                   cn_prefixes_v4.txt cn_prefixes_v6.txt \
+                   ru_prefixes_v4.txt ru_prefixes_v6.txt; do
+            if [ ! -s "$f" ]; then
+              echo "ERROR: $f is missing or empty; aborting release to protect existing data"
+              exit 1
+            fi
+          done
+          echo "All output files present and non-empty"
+
       - name: Set release variables
         run: |
           echo "RELEASE_TAG=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV

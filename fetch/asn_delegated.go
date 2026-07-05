@@ -78,6 +78,12 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, err
 
 	fmt.Printf("Fetching ASNs for %s from all RIRs for comprehensive coverage\n", countryCode)
 
+	// The primary RIR holds the bulk of a country's allocations. If it cannot
+	// be fetched we must abort rather than emit a near-empty list, which would
+	// otherwise be published and prune known-good releases downstream.
+	primary, hasPrimary := CountryToRIR[countryCode]
+	primaryFetched := false
+
 	asnSet := make(map[int]bool) // Use map for deduplication
 
 	for _, rir := range rirs {
@@ -89,6 +95,10 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, err
 			continue // Continue with other RIRs even if one fails
 		}
 
+		if hasPrimary && rir == primary {
+			primaryFetched = true
+		}
+
 		asns := f.extractASNsForCountry(records, countryCode)
 		fmt.Printf("Found %d ASNs for %s from %s\n", len(asns), countryCode, rir.Name)
 
@@ -98,12 +108,20 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountry(countryCode string) ([]int, err
 		}
 	}
 
+	if hasPrimary && !primaryFetched {
+		return nil, fmt.Errorf("primary RIR %s for %s could not be fetched after retries; aborting to avoid publishing incomplete data", primary.Name, countryCode)
+	}
+
 	// Convert set back to sorted slice
 	result := make([]int, 0, len(asnSet))
 	for asn := range asnSet {
 		result = append(result, asn)
 	}
 	sort.Ints(result)
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no ASNs found for %s; refusing to continue with empty data", countryCode)
+	}
 
 	fmt.Printf("Total unique ASNs for %s across all RIRs: %d\n", countryCode, len(result))
 	return result, nil
@@ -126,7 +144,28 @@ func (f *MultiRIRASNFetcher) FetchAllSupportedCountries() (map[string][]int, err
 	return result, nil
 }
 
+// Fetches an RIR delegated file with retries and linear backoff, mirroring
+// the BGP fetch behaviour so a transient upstream failure does not silently
+// drop a country's ASNs.
 func (f *MultiRIRASNFetcher) fetchDelegatedRecords(url string) ([]DelegatedRecord, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		records, err := f.fetchDelegatedRecordsOnce(url)
+		if err == nil {
+			return records, nil
+		}
+
+		lastErr = err
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt) * retryDelay)
+		}
+	}
+
+	return nil, fmt.Errorf("all %d attempts failed: %w", maxRetries, lastErr)
+}
+
+func (f *MultiRIRASNFetcher) fetchDelegatedRecordsOnce(url string) ([]DelegatedRecord, error) {
 	resp, err := f.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
