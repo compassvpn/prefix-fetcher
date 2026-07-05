@@ -1,0 +1,4 @@
+# Normalize line endings: store LF in the repository and check out LF
+# everywhere, so the tree stays gofmt-clean regardless of local git settings
+# (e.g. core.autocrlf). git auto-detects binary files and leaves them alone.
+* text=auto eol=lf
