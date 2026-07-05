@@ -1,0 +1,53 @@
+# Dependabot keeps this repo's dependencies patched by opening pull requests
+# when newer versions are published. Two ecosystems are watched:
+#   - github-actions: the actions pinned in .github/workflows/*.yml
+#   - gomod:          the Go module dependencies declared in go.mod
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  # ---- GitHub Actions -----------------------------------------------------
+  # Scans every workflow under .github/workflows and bumps the action pins
+  # (actions/checkout, actions/setup-go, softprops/action-gh-release,
+  # dev-drprasad/delete-older-releases).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      # Bundle low-risk minor/patch bumps into a single PR; major bumps stay
+      # as individual PRs so each can be reviewed on its own.
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- Go modules ---------------------------------------------------------
+  # The module has no third-party dependencies today, but keeping the config
+  # in place means any future ones are tracked from the moment they're added.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "go"
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
