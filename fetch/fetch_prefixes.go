@@ -25,12 +25,13 @@ type Prefix struct {
 	ASN  int          `json:"ASN"`
 }
 
-// Downloads the full BGP table with exponential backoff on failures.
-func fetchWithRetrySimple(client *http.Client) ([]Prefix, error) {
+// Downloads the full BGP table with exponential backoff on failures,
+// retaining only prefixes announced by ASNs in asnSet.
+func fetchWithRetrySimple(client *http.Client, asnSet map[int]bool) ([]Prefix, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		prefixes, err := fetchPrefixesSimple(client)
+		prefixes, err := fetchPrefixesSimple(client, asnSet)
 		if err == nil {
 			return prefixes, nil
 		}
@@ -45,8 +46,9 @@ func fetchWithRetrySimple(client *http.Client) ([]Prefix, error) {
 	return nil, fmt.Errorf("all %d attempts failed: %w", maxRetries, lastErr)
 }
 
-// Streams and parses JSONL BGP data from bgp.tools.
-func fetchPrefixesSimple(client *http.Client) ([]Prefix, error) {
+// Streams and parses JSONL BGP data from bgp.tools, keeping only prefixes
+// whose ASN is in asnSet so the full table is never retained in memory.
+func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, error) {
 	req, err := http.NewRequest("GET", bgpToolsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -77,6 +79,12 @@ func fetchPrefixesSimple(client *http.Client) ([]Prefix, error) {
 			continue // Skip malformed lines
 		}
 
+		// Stream-filter: discard prefixes from ASNs we don't care about so
+		// the ~1M-row table never accumulates in memory.
+		if !asnSet[prefix.ASN] {
+			continue
+		}
+
 		prefixes = append(prefixes, prefix)
 	}
 
@@ -87,20 +95,11 @@ func fetchPrefixesSimple(client *http.Client) ([]Prefix, error) {
 	return prefixes, nil
 }
 
-// Extracts prefixes announced by target ASNs and sorts by IP family.
-func filterByASN(prefixes []Prefix, asns []int) ([]netip.Prefix, []netip.Prefix) {
-	asnSet := make(map[int]bool)
-	for _, asn := range asns {
-		asnSet[asn] = true
-	}
-
+// Splits already-filtered prefixes by IP family and sorts each deterministically.
+func splitByFamily(prefixes []Prefix) ([]netip.Prefix, []netip.Prefix) {
 	var v4, v6 []netip.Prefix
 
 	for _, prefix := range prefixes {
-		if !asnSet[prefix.ASN] {
-			continue
-		}
-
 		if prefix.CIDR.Addr().Is4() {
 			v4 = append(v4, prefix.CIDR)
 		} else if prefix.CIDR.Addr().Is6() {
