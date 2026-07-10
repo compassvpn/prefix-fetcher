@@ -11,7 +11,7 @@
 - **Comprehensive Coverage**: Fetches from all RIRs for complete ASN discovery
 - **BGP Data**: Fetches IP prefixes from [bgp.tools](https://bgp.tools/table.jsonl)
 - **IPv4 /24 Blocks**: Converts IPv4 prefixes to /24 blocks for efficient processing
-- **IPv6 Preservation**: Keeps IPv6 prefixes in their original format
+- **IPv6 Aggregation**: Merges IPv6 prefixes into the minimal set covering exactly the same addresses
 - **Clean & Simple**: No caching, fresh data on every run
 - **Automatic retry logic** with linear backoff
 - **Duplicate removal**: Automatically deduplicates ASNs found across multiple RIRs
@@ -107,7 +107,8 @@ The tool generates country-specific prefix files:
 2. **Downloads BGP Data**: Fetches the complete BGP routing table from bgp.tools
 3. **Filters by ASN**: Keeps only prefixes from the dynamically fetched ASN lists
 4. **Processes IPv4**: Converts IPv4 prefixes to /24 blocks for consistency
-5. **Sorts and Saves**: Outputs clean, sorted prefix lists to text files
+5. **Processes IPv6**: Aggregates IPv6 prefixes into the minimal set with identical coverage (no IPs added or removed)
+6. **Sorts and Saves**: Outputs clean, sorted prefix lists to text files
 
 ## Data Sources
 
