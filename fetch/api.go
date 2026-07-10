@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go4.org/netipx"
 )
 
 // Container for country-specific prefix results.
@@ -63,9 +65,13 @@ func GetPrefixesForCountries(countryASNs map[string][]int) (map[string]*PrefixSe
 		}
 
 		ipv4, ipv6 := filterAndSplit(bgpPrefixes, asnSet)
+		aggregated, err := aggregatePrefixes(ipv6)
+		if err != nil {
+			return nil, fmt.Errorf("failed to aggregate IPv6 prefixes for %s: %w", country, err)
+		}
 		result[country] = &PrefixSet{
 			IPv4: convertToIPv4Blocks(ipv4),
-			IPv6: dedupPrefixes(ipv6),
+			IPv6: aggregated,
 		}
 	}
 
@@ -98,26 +104,29 @@ func convertToIPv4Blocks(prefixes []netip.Prefix) []netip.Prefix {
 	return result
 }
 
-// Deduplicates and sorts prefixes. Used for IPv6 (kept in its original form),
-// mirroring the dedup that convertToIPv4Blocks already does for IPv4: the same
-// CIDR can be announced by more than one of a country's ASNs.
-func dedupPrefixes(prefixes []netip.Prefix) []netip.Prefix {
+// Aggregates prefixes into the minimal set covering exactly the same
+// addresses: duplicates and covered prefixes are dropped and adjacent siblings
+// merged. Used for IPv6, where the fixed-block scheme applied to IPv4 does not
+// transfer: allocations are too sparse for any uniform block size (splitting
+// CN to /48s yields ~1.9 billion blocks, while masking to anything coarser
+// swallows address space announced by other networks). Returned prefixes are
+// non-overlapping and sorted in address order.
+func aggregatePrefixes(prefixes []netip.Prefix) ([]netip.Prefix, error) {
 	if len(prefixes) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	set := make(map[netip.Prefix]bool, len(prefixes))
+	var builder netipx.IPSetBuilder
 	for _, prefix := range prefixes {
-		set[prefix] = true
+		builder.AddPrefix(prefix)
 	}
 
-	result := make([]netip.Prefix, 0, len(set))
-	for prefix := range set {
-		result = append(result, prefix)
+	set, err := builder.IPSet()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build prefix set: %w", err)
 	}
 
-	slices.SortFunc(result, prefixCompare)
-	return result
+	return set.Prefixes(), nil
 }
 
 // Breaks down larger prefixes into /24 chunks for consistency. IPv4 is 32-bit,
