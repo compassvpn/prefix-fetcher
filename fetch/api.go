@@ -50,7 +50,10 @@ func GetPrefixesForCountries(countryASNs map[string][]int) (map[string]*PrefixSe
 		return result, nil
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Client.Timeout bounds the whole exchange including reading the body.
+	// The full table is ~100 MB, so a short deadline fails permanently on
+	// slow links; keep a ceiling only to avoid hanging on a stalled server.
+	client := &http.Client{Timeout: 10 * time.Minute}
 
 	fmt.Println("Downloading BGP table once for all countries...")
 	bgpPrefixes, err := fetchWithRetrySimple(client, union)
@@ -132,6 +135,13 @@ func aggregatePrefixes(prefixes []netip.Prefix) ([]netip.Prefix, error) {
 // Breaks down larger prefixes into /24 chunks for consistency. IPv4 is 32-bit,
 // so plain uint32 arithmetic suffices (no big.Int needed).
 func splitToBlocks(prefix netip.Prefix) []netip.Prefix {
+	// Nothing shorter than /8 is announced in the global table; such a line
+	// is garbage or a leak, and expanding it could mean up to 2^24 blocks.
+	if prefix.Bits() < 8 {
+		fmt.Fprintf(os.Stderr, "Warning: skipping implausibly short prefix %s\n", prefix)
+		return nil
+	}
+
 	if prefix.Bits() >= 24 {
 		// Already /24 or smaller - just align to /24 boundary
 		bytes := prefix.Addr().As4()
@@ -187,7 +197,9 @@ func writePrefixesToFile(filename string, prefixes []netip.Prefix) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer file.Close()
+	// Safety net for the early-return paths; the success path closes
+	// explicitly below so the error is checked.
+	defer func() { _ = file.Close() }()
 
 	// Buffer writes: prefix lists can reach ~1M+ /24 blocks (e.g. CN), and one
 	// syscall per line is needlessly slow.
@@ -201,6 +213,10 @@ func writePrefixesToFile(filename string, prefixes []netip.Prefix) error {
 
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("failed to flush prefixes: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	return nil
