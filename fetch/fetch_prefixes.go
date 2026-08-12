@@ -96,7 +96,7 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &httpStatusError{code: resp.StatusCode, status: resp.Status}
@@ -145,10 +145,13 @@ func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []n
 			continue
 		}
 
-		if prefix.CIDR.Addr().Is4() {
-			v4 = append(v4, prefix.CIDR)
-		} else if prefix.CIDR.Addr().Is6() {
-			v6 = append(v6, prefix.CIDR)
+		// Mask at ingestion: the feed is not guaranteed canonical, and
+		// downstream /24 splitting assumes host bits are zero.
+		cidr := prefix.CIDR.Masked()
+		if cidr.Addr().Is4() {
+			v4 = append(v4, cidr)
+		} else if cidr.Addr().Is6() {
+			v6 = append(v6, cidr)
 		}
 	}
 

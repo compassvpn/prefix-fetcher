@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,7 +97,7 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[s
 
 		records, err := f.fetchDelegatedRecords(rir.URL)
 		if err != nil {
-			fmt.Printf("Warning: Failed to fetch from %s: %v\n", rir.Name, err)
+			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch from %s: %v\n", rir.Name, err)
 			continue // Continue with other RIRs even if one fails
 		}
 		fetched[rir] = true
@@ -166,7 +167,7 @@ func (f *MultiRIRASNFetcher) fetchDelegatedRecordsOnce(url string) ([]DelegatedR
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &httpStatusError{code: resp.StatusCode, status: resp.Status}
@@ -189,11 +190,9 @@ func (f *MultiRIRASNFetcher) parseDelegatedFile(reader io.Reader) ([]DelegatedRe
 			continue
 		}
 
-		// Skip version and summary lines
-		if strings.Contains(line, "|version|") || strings.Contains(line, "|summary|") {
-			continue
-		}
-
+		// Version and summary lines need no special handling: summary lines
+		// have only 6 fields and fail parsing below, and the version line
+		// parses but its type field never matches "asn".
 		record, err := f.parseDelegatedRecord(line)
 		if err != nil {
 			// Skip malformed lines rather than failing completely
