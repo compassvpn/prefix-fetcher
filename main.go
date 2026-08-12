@@ -48,25 +48,22 @@ func main() {
 	}
 }
 
-// fetchAndSavePrefixes fetches ASNs and prefixes for the given countries and
-// saves them to files. The shared RIR delegated files and the BGP table are
-// each downloaded only once, regardless of how many countries are requested.
+// Fetches ASNs and prefixes for the given countries and saves them to files.
+// The shared RIR delegated files and the BGP table are each downloaded only
+// once, no matter how many countries are requested.
 func fetchAndSavePrefixes(countries []string) error {
 	fmt.Printf("Fetching prefixes for %s...\n", strings.Join(countries, ", "))
 
-	// Get ASNs from all RIRs (single pass).
 	asnsByCountry, err := fetch.GetASNsForCountries(countries)
 	if err != nil {
 		return fmt.Errorf("failed to get ASNs: %w", err)
 	}
 
-	// Fetch BGP prefixes (single download for all countries).
 	prefixesByCountry, err := fetch.GetPrefixesForCountries(asnsByCountry)
 	if err != nil {
 		return fmt.Errorf("failed to get prefixes: %w", err)
 	}
 
-	// Save each country's results.
 	for _, country := range countries {
 		prefixes := prefixesByCountry[country]
 		fmt.Printf("Found %d IPv4 and %d IPv6 prefixes for %s\n", len(prefixes.IPv4), len(prefixes.IPv6), country)

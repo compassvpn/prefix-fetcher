@@ -12,29 +12,29 @@ import (
 	"time"
 )
 
-// Registry endpoint with its official delegated file URL.
+// A registry with its delegated file URL.
 type RIR struct {
 	Name string
 	URL  string
 }
 
-// Parsed entry from an RIR's pipe-delimited allocation file.
+// One line of an RIR's pipe-delimited delegated file.
 type DelegatedRecord struct {
-	Registry string // RIR name
-	CC       string // Country code
-	Type     string // Record type (asn, ipv4, ipv6)
-	Start    string // Start value
-	Value    string // Count or size
-	Date     string // Allocation date
-	Status   string // Allocation status
+	Registry string
+	CC       string // country code
+	Type     string // asn, ipv4, or ipv6
+	Start    string // first ASN or IP of the block
+	Value    string // count (asn, ipv4) or prefix length (ipv6)
+	Date     string
+	Status   string // allocated, assigned, reserved, or available
 }
 
-// Downloads and parses ASN data from multiple RIR sources.
+// Downloads and parses ASN data from all RIRs.
 type MultiRIRASNFetcher struct {
 	httpClient *http.Client
 }
 
-// Well-known RIR delegated file URLs
+// Well-known RIR delegated file URLs.
 var (
 	RIPE_NCC = RIR{
 		Name: "RIPE NCC",
@@ -58,27 +58,26 @@ var (
 	}
 )
 
-// Maps countries to their primary RIR for reference (now fetches from all RIRs for completeness).
+// Maps each country to the RIR holding the bulk of its allocations. A run
+// aborts if a country's primary RIR cannot be fetched.
 var CountryToRIR = map[string]RIR{
-	"IR": RIPE_NCC, // Iran - Middle East (RIPE NCC coverage)
-	"CN": APNIC,    // China - Asia-Pacific (APNIC coverage)
-	"RU": RIPE_NCC, // Russia - Europe/Central Asia (RIPE NCC coverage)
+	"IR": RIPE_NCC,
+	"CN": APNIC,
+	"RU": RIPE_NCC,
 }
 
 func NewMultiRIRASNFetcher() *MultiRIRASNFetcher {
 	return &MultiRIRASNFetcher{
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second, // Increased timeout for fetching from all RIRs
+			Timeout: 120 * time.Second, // covers a full delegated-file download
 		},
 	}
 }
 
-// FetchASNsForCountries downloads every RIR delegated file exactly once and
-// extracts ASNs for all requested countries in a single pass, returning a map
-// keyed by country code. This avoids re-downloading the (shared) RIR files once
-// per country.
+// Downloads every RIR delegated file exactly once and extracts ASNs for all
+// requested countries in a single pass, returning a map keyed by country code.
+// This avoids re-downloading the shared RIR files once per country.
 func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[string][]int, error) {
-	// Get all RIRs for comprehensive coverage
 	rirs := []RIR{RIPE_NCC, APNIC, ARIN, LACNIC, AFRINIC}
 
 	fmt.Printf("Fetching ASNs for %s from all RIRs for comprehensive coverage\n", strings.Join(countryCodes, ", "))
@@ -98,7 +97,7 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[s
 		records, err := f.fetchDelegatedRecords(rir.URL)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch from %s: %v\n", rir.Name, err)
-			continue // Continue with other RIRs even if one fails
+			continue // tolerated unless it is a primary RIR; see guard below
 		}
 		fetched[rir] = true
 
@@ -138,9 +137,8 @@ func (f *MultiRIRASNFetcher) FetchASNsForCountries(countryCodes []string) (map[s
 	return result, nil
 }
 
-// Fetches an RIR delegated file with retries and linear backoff, mirroring
-// the BGP fetch behaviour so a transient upstream failure does not silently
-// drop a country's ASNs.
+// Downloads a delegated file with retries so a transient upstream failure
+// does not silently drop a country's ASNs.
 func (f *MultiRIRASNFetcher) fetchDelegatedRecords(url string) ([]DelegatedRecord, error) {
 	var lastErr error
 
@@ -176,7 +174,7 @@ func (f *MultiRIRASNFetcher) fetchDelegatedRecordsOnce(url string) ([]DelegatedR
 	return f.parseDelegatedFile(resp.Body)
 }
 
-// Parses the standard RIR delegated file format (pipe-delimited).
+// Parses the pipe-delimited RIR delegated file format.
 func (f *MultiRIRASNFetcher) parseDelegatedFile(reader io.Reader) ([]DelegatedRecord, error) {
 	var records []DelegatedRecord
 	scanner := bufio.NewScanner(reader)
@@ -185,7 +183,6 @@ func (f *MultiRIRASNFetcher) parseDelegatedFile(reader io.Reader) ([]DelegatedRe
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -226,17 +223,15 @@ func (f *MultiRIRASNFetcher) parseDelegatedRecord(line string) (DelegatedRecord,
 	}, nil
 }
 
-// Extracts valid public ASNs from delegated records, expanding ranges.
+// Collects a country's valid public ASNs, expanding ranges.
 func (f *MultiRIRASNFetcher) extractASNsForCountry(records []DelegatedRecord, countryCode string) []int {
 	var asns []int
 
 	for _, record := range records {
-		// Only process ASN records for the specified country
 		if record.Type != "asn" || record.CC != countryCode {
 			continue
 		}
 
-		// Skip if status indicates it's not a proper allocation
 		if record.Status == "reserved" || record.Status == "available" {
 			continue
 		}
@@ -251,7 +246,6 @@ func (f *MultiRIRASNFetcher) extractASNsForCountry(records []DelegatedRecord, co
 			continue
 		}
 
-		// Expand ASN ranges and filter out private/reserved numbers
 		for i := 0; i < count; i++ {
 			asn := startASN + i
 			if f.isValidPublicASN(asn) {
@@ -263,9 +257,8 @@ func (f *MultiRIRASNFetcher) extractASNsForCountry(records []DelegatedRecord, co
 	return asns
 }
 
-// Validates ASN against IANA reservations and private ranges.
+// Reports whether an ASN is public per IANA assignments.
 func (f *MultiRIRASNFetcher) isValidPublicASN(asn int) bool {
-	// Filter out reserved and private ASN ranges
 	// See: https://www.iana.org/assignments/as-numbers/as-numbers.xhtml
 
 	if asn == 0 {
@@ -284,10 +277,7 @@ func (f *MultiRIRASNFetcher) isValidPublicASN(asn int) bool {
 		return false // Reserved
 	}
 
-	// Valid public ASN ranges:
-	// 1-64511 (16-bit public)
-	// 131072-4199999999 (32-bit public, excluding private ranges)
-
+	// Remaining valid ranges: 1-64511 (16-bit), 131072-4199999999 (32-bit).
 	if asn >= 1 && asn <= 64511 {
 		return true
 	}
