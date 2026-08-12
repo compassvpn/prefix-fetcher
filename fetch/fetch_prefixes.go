@@ -18,14 +18,13 @@ const (
 	maxRetries  = 4
 	retryDelay  = 1 * time.Second
 
-	// maxLineSize caps a single scanned line. bufio.Scanner defaults to 64KB
-	// and aborts the whole read on a longer line; BGP/RIR records are tiny, but
-	// 1 MiB of headroom makes an unusually long line a non-issue.
+	// Cap for a scanned line. bufio.Scanner aborts the whole read on lines
+	// over its 64KB default; records are tiny, so 1 MiB is safe headroom.
 	maxLineSize = 1 << 20
 )
 
-// httpStatusError represents a non-2xx HTTP response, carrying the code so the
-// retry logic can decide whether another attempt is worthwhile.
+// A non-2xx HTTP response, carrying the code so the retry logic can decide
+// whether another attempt is worthwhile.
 type httpStatusError struct {
 	code   int
 	status string
@@ -35,10 +34,8 @@ func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.code, e.status)
 }
 
-// retriable reports whether an error is worth another attempt. Network errors
-// and 5xx responses are transient. Among 4xx responses, only 429 (Too Many
-// Requests) and 408 (Request Timeout) are worth retrying — the rest (404, 403,
-// 400, ...) are permanent and retrying just wastes time.
+// Reports whether an error is worth another attempt. Network errors and 5xx
+// responses are transient; among 4xx only 429 and 408 are.
 func retriable(err error) bool {
 	var se *httpStatusError
 	if !errors.As(err, &se) {
@@ -58,9 +55,8 @@ type Prefix struct {
 	ASN  int          `json:"ASN"`
 }
 
-// Downloads the full BGP table with linear backoff on failures (delay grows
-// by retryDelay each attempt), retaining only prefixes announced by ASNs in
-// asnSet.
+// Downloads the BGP table with linear backoff, retaining only prefixes
+// announced by ASNs in asnSet.
 func fetchWithRetrySimple(client *http.Client, asnSet map[int]bool) ([]Prefix, error) {
 	var lastErr error
 
@@ -83,8 +79,8 @@ func fetchWithRetrySimple(client *http.Client, asnSet map[int]bool) ([]Prefix, e
 	return nil, fmt.Errorf("all %d attempts failed: %w", maxRetries, lastErr)
 }
 
-// Streams and parses JSONL BGP data from bgp.tools, keeping only prefixes
-// whose ASN is in asnSet so the full table is never retained in memory.
+// Streams the JSONL BGP table, keeping only prefixes whose ASN is in asnSet
+// so the full table is never retained in memory.
 func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, error) {
 	req, err := http.NewRequest("GET", bgpToolsURL, nil)
 	if err != nil {
@@ -117,8 +113,6 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 			continue // Skip malformed lines
 		}
 
-		// Stream-filter: discard prefixes from ASNs we don't care about so
-		// the ~1M-row table never accumulates in memory.
 		if !asnSet[prefix.ASN] {
 			continue
 		}
@@ -134,9 +128,7 @@ func fetchPrefixesSimple(client *http.Client, asnSet map[int]bool) ([]Prefix, er
 }
 
 // Selects prefixes announced by ASNs in asnSet and splits them by IP family.
-// Used to carve a single country's prefixes out of the shared (union-filtered)
-// table. Neither family is sorted or deduplicated here: v4 is handled by
-// convertToIPv4Blocks and v6 by aggregatePrefixes, both of which dedup and sort.
+// Output is neither sorted nor deduplicated; callers handle both.
 func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []netip.Prefix) {
 	var v4, v6 []netip.Prefix
 
@@ -158,7 +150,7 @@ func filterAndSplit(prefixes []Prefix, asnSet map[int]bool) ([]netip.Prefix, []n
 	return v4, v6
 }
 
-// Comparison for deterministic prefix ordering.
+// Orders prefixes deterministically.
 func prefixCompare(a, b netip.Prefix) int {
 	if c := cmp.Compare(a.Addr().BitLen(), b.Addr().BitLen()); c != 0 {
 		return c

@@ -14,23 +14,22 @@ import (
 	"go4.org/netipx"
 )
 
-// Container for country-specific prefix results.
+// A country's prefixes split by IP family.
 type PrefixSet struct {
 	IPv4 []netip.Prefix
 	IPv6 []netip.Prefix
 }
 
-// Downloads ASN allocations from all RIRs for the given countries in a single
-// pass, returning a map keyed by country code.
+// Downloads ASN allocations from all RIRs in a single pass, returning a map
+// keyed by country code.
 func GetASNsForCountries(countries []string) (map[string][]int, error) {
 	fetcher := NewMultiRIRASNFetcher()
 	return fetcher.FetchASNsForCountries(countries)
 }
 
-// GetPrefixesForCountries downloads the BGP table exactly once (filtered to the
-// union of all countries' ASNs during the scan) and then carves out each
-// country's prefixes, converting IPv4 to /24 blocks. Returns a map keyed by
-// country code.
+// Downloads the BGP table exactly once (filtered to the union of all
+// countries' ASNs during the scan), then carves out each country's prefixes,
+// converting IPv4 to /24 blocks. Returns a map keyed by country code.
 func GetPrefixesForCountries(countryASNs map[string][]int) (map[string]*PrefixSet, error) {
 	result := make(map[string]*PrefixSet, len(countryASNs))
 
@@ -107,13 +106,9 @@ func convertToIPv4Blocks(prefixes []netip.Prefix) []netip.Prefix {
 	return result
 }
 
-// Aggregates prefixes into the minimal set covering exactly the same
-// addresses: duplicates and covered prefixes are dropped and adjacent siblings
-// merged. Used for IPv6, where the fixed-block scheme applied to IPv4 does not
-// transfer: allocations are too sparse for any uniform block size (splitting
-// CN to /48s yields ~1.9 billion blocks, while masking to anything coarser
-// swallows address space announced by other networks). Returned prefixes are
-// non-overlapping and sorted in address order.
+// Merges prefixes into the minimal sorted set covering exactly the same
+// addresses. Used for IPv6, where no fixed block size works: /48s explode
+// into billions of blocks and anything coarser swallows other networks' space.
 func aggregatePrefixes(prefixes []netip.Prefix) ([]netip.Prefix, error) {
 	if len(prefixes) == 0 {
 		return nil, nil
@@ -132,8 +127,7 @@ func aggregatePrefixes(prefixes []netip.Prefix) ([]netip.Prefix, error) {
 	return set.Prefixes(), nil
 }
 
-// Breaks down larger prefixes into /24 chunks for consistency. IPv4 is 32-bit,
-// so plain uint32 arithmetic suffices (no big.Int needed).
+// Breaks a prefix into /24-aligned blocks.
 func splitToBlocks(prefix netip.Prefix) []netip.Prefix {
 	// Nothing shorter than /8 is announced in the global table; such a line
 	// is garbage or a leak, and expanding it could mean up to 2^24 blocks.
@@ -143,14 +137,14 @@ func splitToBlocks(prefix netip.Prefix) []netip.Prefix {
 	}
 
 	if prefix.Bits() >= 24 {
-		// Already /24 or smaller - just align to /24 boundary
+		// /24 or longer: align to the /24 boundary.
 		bytes := prefix.Addr().As4()
 		bytes[3] = 0
 		return []netip.Prefix{netip.PrefixFrom(netip.AddrFrom4(bytes), 24)}
 	}
 
-	// Split larger blocks (e.g., /16, /20) into multiple /24s. The base cannot
-	// overflow: base + (blockCount-1)*256 stays within the prefix's range.
+	// The base cannot overflow: base + (blockCount-1)*256 stays within the
+	// prefix's range.
 	blockCount := 1 << (24 - prefix.Bits())
 	blocks := make([]netip.Prefix, blockCount)
 
@@ -173,7 +167,7 @@ func uint32ToIP(v uint32) netip.Addr {
 	return netip.AddrFrom4(bytes)
 }
 
-// Writes results to standard format files with progress feedback.
+// Writes a country's prefix lists to its output files.
 func SavePrefixesToFiles(country string, prefixes *PrefixSet) error {
 	countryLower := strings.ToLower(country)
 
