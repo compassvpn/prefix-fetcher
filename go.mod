@@ -1,5 +1,5 @@
 module prefix-fetcher
 
-go 1.24.5
+go 1.27.2
 
-require go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
+require go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
